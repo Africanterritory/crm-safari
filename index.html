@@ -5575,7 +5575,7 @@ async function procesarArchivos(files) {
       mostrarToast(`📤 Subiendo ${file.name}...`, '');
 
       const { error: uploadError } = await _sb.storage
-        .from('documentos')
+        .from('Documentos')
         .upload(storagePath, file, { contentType: file.type });
 
       if (uploadError) throw uploadError;
@@ -5692,7 +5692,7 @@ async function descargarDoc(docId) {
   try {
     mostrarToast('Preparando descarga...', '');
     const { data, error } = await _sb.storage
-      .from('documentos')
+      .from('Documentos')
       .createSignedUrl(doc.storagePath, 3600);
     if (error) throw error;
     const a = document.createElement('a');
@@ -5723,7 +5723,7 @@ async function previsualizarDoc(docId) {
     content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gris-suave)">⏳ Cargando vista previa...</div>';
     try {
       const { data, error } = await _sb.storage
-        .from('documentos')
+        .from('Documentos')
         .createSignedUrl(doc.storagePath, 3600);
       if (error) throw error;
       url = data.signedUrl;
@@ -6481,7 +6481,7 @@ function eliminarDoc(docId) {
       // Eliminar el archivo de Supabase Storage si existe
       if (doc.storagePath) {
         try {
-          await _sb.storage.from('documentos').remove([doc.storagePath]);
+          await _sb.storage.from('Documentos').remove([doc.storagePath]);
         } catch (err) {
           console.error('Error eliminando de Storage:', err);
         }
