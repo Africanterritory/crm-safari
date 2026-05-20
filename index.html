@@ -5479,7 +5479,7 @@ function renderTimeline(lead) {
 // ============================================
 // GESTIÓN DE DOCUMENTOS
 // ============================================
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20 MB
 const CATEGORIAS_DOC = [
   { id: 'cotizacion', nombre: 'Cotización', icono: '💰' },
   { id: 'contrato', nombre: 'Contrato', icono: '📜' },
@@ -5561,21 +5561,35 @@ async function procesarArchivos(files) {
 
   for (const file of files) {
     if (file.size > MAX_FILE_SIZE) {
+      mostrarToast(`"${file.name}" supera los 20 MB`, 'error');
       rechazados++;
       continue;
     }
 
     try {
-      const dataUrl = await leerArchivoComoDataURL(file);
+      const docId = 'doc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7);
+      // Limpiar el nombre del archivo para usarlo como ruta en Storage
+      const nombreLimpio = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `${leadEditandoId}/${docId}_${nombreLimpio}`;
+
+      mostrarToast(`📤 Subiendo ${file.name}...`, '');
+
+      const { error: uploadError } = await _sb.storage
+        .from('documentos')
+        .upload(storagePath, file, { contentType: file.type });
+
+      if (uploadError) throw uploadError;
+
       const doc = {
-        id: 'doc_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        id: docId,
         nombre: file.name,
         tipo: file.type || 'application/octet-stream',
         tamaño: file.size,
         categoria: sugerirCategoria(file.name),
-        dataUrl: dataUrl,
+        storagePath: storagePath,
         subido: new Date().toISOString()
       };
+
       lead.documentos.push(doc);
       lead.timeline = lead.timeline || [];
       lead.timeline.push({
@@ -5585,10 +5599,13 @@ async function procesarArchivos(files) {
       });
       añadidos++;
     } catch (err) {
-      console.error('Error leyendo archivo', err);
+      console.error('Error subiendo archivo a Storage:', err);
+      mostrarToast(`Error subiendo "${file.name}"`, 'error');
       rechazados++;
     }
   }
+
+  if (añadidos === 0) return;
 
   lead.modificado = new Date().toISOString();
   await guardarDatos();
@@ -5597,12 +5614,10 @@ async function procesarArchivos(files) {
   renderPipeline();
   renderDashboard();
 
-  if (añadidos > 0 && rechazados === 0) {
-    mostrarToast(`✓ ${añadidos} documento${añadidos > 1 ? 's' : ''} añadido${añadidos > 1 ? 's' : ''}`, 'success');
-  } else if (añadidos > 0 && rechazados > 0) {
-    mostrarToast(`✓ ${añadidos} añadido(s), ${rechazados} rechazado(s) por tamaño`, 'success');
-  } else if (rechazados > 0) {
-    mostrarToast(`Rechazados: archivos > 5 MB`, 'error');
+  if (rechazados === 0) {
+    mostrarToast(`✓ ${añadidos} documento${añadidos > 1 ? 's' : ''} subido${añadidos > 1 ? 's' : ''} correctamente`, 'success');
+  } else {
+    mostrarToast(`✓ ${añadidos} subido(s), ${rechazados} con error`, 'success');
   }
 }
 
@@ -5658,19 +5673,40 @@ async function cambiarCategoriaDoc(docId, nuevaCategoria) {
   renderDocumentos(lead);
 }
 
-function descargarDoc(docId) {
+async function descargarDoc(docId) {
   const lead = datos.leads.find(l => l.id === leadEditandoId);
   if (!lead) return;
   const doc = (lead.documentos || []).find(d => d.id === docId);
   if (!doc) return;
 
-  const a = document.createElement('a');
-  a.href = doc.dataUrl;
-  a.download = doc.nombre;
-  a.click();
+  // Compatibilidad con documentos antiguos en base64
+  if (doc.dataUrl) {
+    const a = document.createElement('a');
+    a.href = doc.dataUrl;
+    a.download = doc.nombre;
+    a.click();
+    return;
+  }
+
+  // Documentos nuevos en Supabase Storage — URL firmada (caduca en 1 hora)
+  try {
+    mostrarToast('Preparando descarga...', '');
+    const { data, error } = await _sb.storage
+      .from('documentos')
+      .createSignedUrl(doc.storagePath, 3600);
+    if (error) throw error;
+    const a = document.createElement('a');
+    a.href = data.signedUrl;
+    a.download = doc.nombre;
+    a.target = '_blank';
+    a.click();
+  } catch (err) {
+    console.error('Error descargando:', err);
+    mostrarToast('Error al descargar el documento', 'error');
+  }
 }
 
-function previsualizarDoc(docId) {
+async function previsualizarDoc(docId) {
   const lead = datos.leads.find(l => l.id === leadEditandoId);
   if (!lead) return;
   const doc = (lead.documentos || []).find(d => d.id === docId);
@@ -5678,11 +5714,29 @@ function previsualizarDoc(docId) {
 
   document.getElementById('previewTitulo').textContent = doc.nombre;
   const content = document.getElementById('previewContent');
+  document.getElementById('btnDescargarPreview').onclick = () => descargarDoc(docId);
+  document.getElementById('modalPreview').classList.add('active');
+
+  // Obtener URL: base64 legacy o URL firmada de Storage
+  let url = doc.dataUrl || null;
+  if (!url && doc.storagePath) {
+    content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--gris-suave)">⏳ Cargando vista previa...</div>';
+    try {
+      const { data, error } = await _sb.storage
+        .from('documentos')
+        .createSignedUrl(doc.storagePath, 3600);
+      if (error) throw error;
+      url = data.signedUrl;
+    } catch (err) {
+      content.innerHTML = '<div style="text-align:center;padding:40px;color:var(--rojo-alerta)">Error cargando la vista previa</div>';
+      return;
+    }
+  }
 
   if (doc.tipo?.startsWith('image/')) {
-    content.innerHTML = `<img src="${doc.dataUrl}" alt="${escapeHtml(doc.nombre)}">`;
+    content.innerHTML = `<img src="${url}" alt="${escapeHtml(doc.nombre)}">`;
   } else if (doc.tipo === 'application/pdf') {
-    content.innerHTML = `<iframe src="${doc.dataUrl}" title="${escapeHtml(doc.nombre)}"></iframe>`;
+    content.innerHTML = `<iframe src="${url}" title="${escapeHtml(doc.nombre)}"></iframe>`;
   } else {
     content.innerHTML = `
       <div class="preview-noprev">
@@ -5692,9 +5746,6 @@ function previsualizarDoc(docId) {
       </div>
     `;
   }
-
-  document.getElementById('btnDescargarPreview').onclick = () => descargarDoc(docId);
-  document.getElementById('modalPreview').classList.add('active');
 }
 
 function cerrarPreview() {
@@ -6427,6 +6478,14 @@ function eliminarDoc(docId) {
     'Eliminar documento',
     `¿Eliminar <strong>${escapeHtml(doc.nombre)}</strong>? Esta acción no se puede deshacer.`,
     async () => {
+      // Eliminar el archivo de Supabase Storage si existe
+      if (doc.storagePath) {
+        try {
+          await _sb.storage.from('documentos').remove([doc.storagePath]);
+        } catch (err) {
+          console.error('Error eliminando de Storage:', err);
+        }
+      }
       lead.documentos = (lead.documentos || []).filter(d => d.id !== docId);
       lead.timeline = lead.timeline || [];
       lead.timeline.push({
