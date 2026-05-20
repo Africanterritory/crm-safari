@@ -5653,9 +5653,9 @@ function renderDocumentos(lead) {
           </div>
         </div>
         <div class="doc-actions">
-          ${puedePrevisar ? `<button class="icon-btn" onclick="previsualizarDoc('${doc.id}')" title="Vista previa">👁️</button>` : ''}
-          <button class="icon-btn" onclick="descargarDoc('${doc.id}')" title="Descargar">📥</button>
-          <button class="icon-btn" onclick="eliminarDoc('${doc.id}')" title="Eliminar" style="background:#fde5e3">🗑️</button>
+          ${puedePrevisar ? `<button type="button" class="icon-btn" onclick="previsualizarDoc('${doc.id}')" title="Vista previa">👁️</button>` : ''}
+          <button type="button" class="icon-btn" onclick="descargarDoc('${doc.id}')" title="Descargar">📥</button>
+          <button type="button" class="icon-btn" onclick="eliminarDoc('${doc.id}')" title="Eliminar" style="background:#fde5e3">🗑️</button>
         </div>
       </div>
     `;
