@@ -2304,6 +2304,7 @@
               <option value="pagado">💰 Pagado completo</option>
               <option value="en-curso">✈️ Safari en curso</option>
               <option value="completado">🏆 Completado</option>
+              <option value="pospuesto">📅 Pospuesto · 2027</option>
               <option value="perdido">❌ Perdido</option>
             </select>
           </div>
@@ -3006,7 +3007,7 @@ function verificarSesion() {
 // ============================================
 // CONFIGURACIÓN DE ETAPAS
 // ============================================
-const ETAPAS = [
+const ETAPAS_BASE = [
   { id: 'lead-nuevo',       icono: '🌱', titulo: 'Lead nuevo' },
   { id: 'primer-contacto',  icono: '📞', titulo: 'Primer contacto' },
   { id: 'cotizacion',       icono: '📋', titulo: 'Cotización enviada' },
@@ -3015,8 +3016,20 @@ const ETAPAS = [
   { id: 'pagado',           icono: '💰', titulo: 'Pagado completo' },
   { id: 'en-curso',         icono: '✈️', titulo: 'Safari en curso' },
   { id: 'completado',       icono: '🏆', titulo: 'Completado' },
+  { id: 'pospuesto',        icono: '📅', titulo: 'Pospuesto · 2027' },
   { id: 'perdido',          icono: '❌', titulo: 'Perdido' }
 ];
+
+// Devuelve las etapas base + las columnas personalizadas que hayan creado Laura/Fernando
+function getEtapas() {
+  const custom = (datos?.config?.etapasCustom || []).map(e => ({ ...e, esCustom: true }));
+  const base = [...ETAPAS_BASE];
+  // Las columnas personalizadas van justo antes de "Perdido"
+  const idxPerdido = base.findIndex(e => e.id === 'perdido');
+  if (idxPerdido >= 0) base.splice(idxPerdido, 0, ...custom);
+  else base.push(...custom);
+  return base;
+}
 
 // Tipo de cambio aproximado (editable en próxima fase)
 const TIPOS_CAMBIO = { EUR: 1, USD: 0.92, ZAR: 0.05 };
@@ -4597,7 +4610,7 @@ function getLeadsFiltrados() {
 // ============================================
 function renderDashboard() {
   const leads = datos.leads;
-  const activos = leads.filter(l => !['completado', 'perdido'].includes(l.etapa));
+  const activos = leads.filter(l => !['completado', 'pospuesto', 'perdido'].includes(l.etapa));
   
   // Valor pipeline en EUR (solo activos no perdidos)
   // Si el lead tiene cotizaciones, prioriza: aceptada > enviada > revisión > presupuesto estimado
@@ -5121,26 +5134,92 @@ function renderPipeline() {
   const leadsFiltrados = getLeadsFiltrados();
   const pipeline = document.getElementById('pipeline');
   
-  pipeline.innerHTML = ETAPAS.map(etapa => {
+  const columnasHtml = getEtapas().map(etapa => {
     const leadsEtapa = leadsFiltrados.filter(l => l.etapa === etapa.id);
+    const btnBorrar = etapa.esCustom
+      ? `<button type="button" onclick="eliminarColumnaCustom('${etapa.id}')" title="Eliminar columna"
+           style="background:none;border:none;cursor:pointer;font-size:13px;opacity:0.5;padding:0 2px;"
+           onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">×</button>`
+      : '';
     return `
       <div class="stage-column">
         <div class="stage-header">
-          <div class="stage-title">${etapa.icono} ${etapa.titulo}</div>
+          <div class="stage-title">${etapa.icono} ${etapa.titulo} ${btnBorrar}</div>
           <div class="stage-count">${leadsEtapa.length}</div>
         </div>
-        <div class="stage-cards" 
+        <div class="stage-cards"
              data-etapa="${etapa.id}"
              ondragover="handleDragOver(event)"
              ondragleave="handleDragLeave(event)"
              ondrop="handleDrop(event, '${etapa.id}')">
-          ${leadsEtapa.length === 0 
-            ? '<div class="empty-stage">Sin leads</div>' 
+          ${leadsEtapa.length === 0
+            ? '<div class="empty-stage">Sin leads</div>'
             : leadsEtapa.map(lead => renderLeadCard(lead)).join('')}
         </div>
       </div>
     `;
   }).join('');
+
+  const btnNuevaColumna = `
+    <div style="flex:0 0 auto;display:flex;align-items:flex-start;padding-top:4px;">
+      <button type="button" onclick="abrirNuevaColumna()"
+        style="writing-mode:vertical-lr;transform:rotate(180deg);
+               background:white;border:1.5px dashed var(--tierra-clara);
+               color:var(--tierra-media);border-radius:var(--radius-md);
+               padding:14px 10px;cursor:pointer;font-size:13px;font-weight:500;
+               font-family:inherit;opacity:0.75;transition:opacity 0.2s;"
+        onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.75"
+        title="Añadir nueva columna al pipeline">
+        ＋ Nueva columna
+      </button>
+    </div>`;
+
+  pipeline.innerHTML = columnasHtml + btnNuevaColumna;
+}
+
+// ============================================
+// COLUMNAS PERSONALIZADAS
+// ============================================
+async function abrirNuevaColumna() {
+  const nombre = window.prompt('Nombre de la nueva columna:\n(Ej: "Pendiente de presupuesto", "En espera de vuelos"...)');
+  if (!nombre || !nombre.trim()) return;
+
+  const emoji = window.prompt('Emoji para la columna (opcional, pulsa Enter para usar 📌):') || '📌';
+  const icono = emoji.trim() || '📌';
+
+  const id = 'custom_' + Date.now();
+  if (!datos.config.etapasCustom) datos.config.etapasCustom = [];
+  datos.config.etapasCustom.push({ id, icono, titulo: nombre.trim() });
+
+  await guardarDatos();
+  renderPipeline();
+  mostrarToast(`✓ Columna "${nombre.trim()}" creada`, 'success');
+}
+
+async function eliminarColumnaCustom(etapaId) {
+  const etapa = (datos.config.etapasCustom || []).find(e => e.id === etapaId);
+  if (!etapa) return;
+
+  const leadsEnColumna = datos.leads.filter(l => l.etapa === etapaId).length;
+  const aviso = leadsEnColumna > 0
+    ? `\n\n⚠️ Hay ${leadsEnColumna} lead(s) en esta columna. Se moverán a "Lead nuevo".`
+    : '';
+
+  abrirConfirm(
+    'Eliminar columna',
+    `¿Eliminar la columna <strong>${escapeHtml(etapa.titulo)}</strong>?${aviso.replace(/\n/g, '<br>')}`,
+    async () => {
+      // Mover leads huérfanos a lead-nuevo
+      datos.leads.forEach(l => {
+        if (l.etapa === etapaId) l.etapa = 'lead-nuevo';
+      });
+      datos.config.etapasCustom = (datos.config.etapasCustom || []).filter(e => e.id !== etapaId);
+      await guardarDatos();
+      renderPipeline();
+      renderDashboard();
+      mostrarToast(`✓ Columna eliminada`, 'success');
+    }
+  );
 }
 
 function renderLeadCard(lead) {
@@ -5150,10 +5229,10 @@ function renderLeadCard(lead) {
   const diasSinMover = lead.modificado 
     ? Math.floor((hoy - new Date(lead.modificado)) / (1000 * 60 * 60 * 24))
     : 0;
-  const tieneAlertaRoja = diasSinMover >= 14 && !['completado', 'perdido'].includes(lead.etapa);
+  const tieneAlertaRoja = diasSinMover >= 14 && !['completado', 'pospuesto', 'perdido'].includes(lead.etapa);
   
   let accionAtrasada = false;
-  if (lead.fechaSeguimiento && !['completado', 'perdido'].includes(lead.etapa)) {
+  if (lead.fechaSeguimiento && !['completado', 'pospuesto', 'perdido'].includes(lead.etapa)) {
     accionAtrasada = new Date(lead.fechaSeguimiento) < hoy;
   }
 
@@ -5311,8 +5390,8 @@ async function handleDrop(e, nuevaEtapa) {
     return;
   }
 
-  const etapaAnterior = ETAPAS.find(e => e.id === lead.etapa)?.titulo || lead.etapa;
-  const etapaNueva = ETAPAS.find(e => e.id === nuevaEtapa)?.titulo || nuevaEtapa;
+  const etapaAnterior = getEtapas().find(e => e.id === lead.etapa)?.titulo || lead.etapa;
+  const etapaNueva = getEtapas().find(e => e.id === nuevaEtapa)?.titulo || nuevaEtapa;
 
   lead.etapa = nuevaEtapa;
   lead.modificado = new Date().toISOString();
@@ -6577,8 +6656,8 @@ async function guardarLead(e) {
     const idx = datos.leads.findIndex(l => l.id === id);
     if (idx >= 0) {
       const leadAnterior = datos.leads[idx];
-      const etapaAnteriorTxt = ETAPAS.find(e => e.id === leadAnterior.etapa)?.titulo;
-      const etapaNuevaTxt = ETAPAS.find(e => e.id === datosLead.etapa)?.titulo;
+      const etapaAnteriorTxt = getEtapas().find(e => e.id === leadAnterior.etapa)?.titulo;
+      const etapaNuevaTxt = getEtapas().find(e => e.id === datosLead.etapa)?.titulo;
       
       datos.leads[idx] = { ...leadAnterior, ...datosLead };
       
@@ -6725,7 +6804,7 @@ function exportarExcel() {
       'País': l.pais || '',
       'Idioma': l.idioma || '',
       'Tipo Safari': l.tipo || '',
-      'Etapa': ETAPAS.find(e => e.id === l.etapa)?.titulo || l.etapa || '',
+      'Etapa': getEtapas().find(e => e.id === l.etapa)?.titulo || l.etapa || '',
       'Fuente': l.fuente || '',
       'Detalle Fuente': l.fuenteDetalle || '',
       'Fecha Safari': l.fechaSafari || '',
@@ -7184,7 +7263,7 @@ function calcularAccionesPendientes() {
 
     // -------- 6. Lead frío 14 días --------
     if (reglas.lead_frio_14?.activa && lead.modificado &&
-        !['completado', 'perdido'].includes(lead.etapa)) {
+        !['completado', 'pospuesto', 'perdido'].includes(lead.etapa)) {
       const dias = diffDias(lead.modificado, hoy);
       if (dias >= 14) {
         if (!accionDescartada(lead.id, 'lead_frio_14')) {
@@ -7194,7 +7273,7 @@ function calcularAccionesPendientes() {
             tipo: 'frio',
             prioridad: 'urgente',
             titulo: `❄️ ${lead.nombre} · Lead frío (${dias}d sin mover)`,
-            descripcion: `Etapa: ${ETAPAS.find(e => e.id === lead.etapa)?.titulo}. Reactivar o marcar como perdido.`,
+            descripcion: `Etapa: ${getEtapas().find(e => e.id === lead.etapa)?.titulo}. Reactivar o marcar como perdido.`,
             empresa: lead.empresa,
             acciones: [
               ...(lead.whatsapp ? [{ tipo: 'enviar_libre', canal: 'whatsapp', label: '💬 Reactivar WhatsApp' }] : []),
@@ -8022,7 +8101,7 @@ function renderReporte(tab) {
 
 function renderReporteGeneral() {
   const leads = datos.leads;
-  const activos = leads.filter(l => !['completado', 'perdido'].includes(l.etapa));
+  const activos = leads.filter(l => !['completado', 'pospuesto', 'perdido'].includes(l.etapa));
   const ganados = leads.filter(l => ['reservado', 'pagado', 'en-curso', 'completado'].includes(l.etapa));
   const perdidos = leads.filter(l => l.etapa === 'perdido');
   
@@ -8100,7 +8179,7 @@ function renderReporteGeneral() {
 
     <div class="reporte-seccion">
       <h4>Distribución por etapa (solo activos)</h4>
-      ${ETAPAS.filter(e => !['completado','perdido'].includes(e.id)).map(e => {
+      ${getEtapas().filter(e => !['completado','perdido'].includes(e.id)).map(e => {
         const count = activos.filter(l => l.etapa === e.id).length;
         return renderBarra(`${e.icono} ${e.titulo}`, count, activos.length, '');
       }).join('')}
@@ -8316,7 +8395,7 @@ function renderReporteConversion() {
   const leads = datos.leads;
   // Conteo por etapa
   const porEtapa = {};
-  ETAPAS.forEach(e => { porEtapa[e.id] = 0; });
+  getEtapas().forEach(e => { porEtapa[e.id] = 0; });
   leads.forEach(l => {
     if (porEtapa[l.etapa] !== undefined) porEtapa[l.etapa]++;
   });
@@ -8357,7 +8436,7 @@ function renderReporteConversion() {
     <div class="reporte-seccion">
       <h4>📊 Embudo de conversión</h4>
       ${embudo.map(eId => {
-        const etapa = ETAPAS.find(e => e.id === eId);
+        const etapa = getEtapas().find(e => e.id === eId);
         if (!etapa) return '';
         // Acumulado: leads que están o han pasado por esta etapa
         const ordenEmbudo = embudo;
@@ -8393,7 +8472,7 @@ function exportarReporteExcel() {
   const leads = datos.leads;
   const general = [
     { Métrica: 'Total leads', Valor: leads.length },
-    { Métrica: 'Activos', Valor: leads.filter(l => !['completado','perdido'].includes(l.etapa)).length },
+    { Métrica: 'Activos', Valor: leads.filter(l => !['completado','pospuesto','perdido'].includes(l.etapa)).length },
     { Métrica: 'Ganados (reservado+)', Valor: leads.filter(l => ['reservado','pagado','en-curso','completado'].includes(l.etapa)).length },
     { Métrica: 'Perdidos', Valor: leads.filter(l => l.etapa === 'perdido').length },
     { Métrica: 'ATS', Valor: leads.filter(l => l.empresa === 'ATS').length },
